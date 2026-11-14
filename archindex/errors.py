@@ -89,3 +89,33 @@ class AssemblyDataError(AssemblyError):
     The message always names the plan node and the offending row identity so
     the problem can be located without re-running the export.
     """
+
+
+class RelGenError(ArchiveIndexError):
+    """Base class for relational test-data generation failures."""
+
+
+class RecipeError(RelGenError):
+    """A data-generation recipe is internally invalid.
+
+    Raised before any row is produced: structural problems, unresolvable
+    names, illegal generators, key-range overflows, required references to
+    empty tables and derived-column dependency cycles.
+    """
+
+
+class GenerationError(RelGenError):
+    """A single addressed value or row could not be produced.
+
+    The message always locates the table, row number, column and the
+    dependency path that led to the failure.
+    """
+
+    def __init__(self, message: str, *, table: str | None = None,
+                 row: int | None = None, column: str | None = None,
+                 path: tuple[str, ...] = ()):
+        self.table = table
+        self.row = row
+        self.column = column
+        self.path = tuple(path)
+        super().__init__(message)

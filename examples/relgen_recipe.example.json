@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "tables": [
+    {
+      "name": "customer",
+      "row_count": 4,
+      "primary_key": {"column": "customer_id", "base": 1000, "stride": 10},
+      "columns": [
+        {"name": "tier", "type": "integer",
+         "generator": {"kind": "int_range", "min": 1, "max": 3}},
+        {"name": "label", "type": "text",
+         "generator": {"kind": "choice", "values": ["金牌", "银牌", "铜牌"]},
+         "null_ratio": {"numerator": 1, "denominator": 4}},
+        {"name": "code", "type": "text",
+         "generator": {"kind": "text", "prefix": "客户-", "length": 8},
+         "max_utf8_bytes": 32}
+      ]
+    },
+    {
+      "name": "handover_order",
+      "row_count": 6,
+      "primary_key": {"column": "order_id", "base": 5000, "stride": 1},
+      "columns": [
+        {"name": "customer_id", "type": "integer",
+         "reference": {"table": "customer", "select": "round_robin",
+                       "nullable": false}},
+        {"name": "backup_customer_id", "type": "integer",
+         "reference": {"table": "customer", "select": "hash",
+                       "nullable": true,
+                       "null_ratio": {"numerator": 1, "denominator": 4}}},
+        {"name": "order_no", "type": "text",
+         "generator": {"kind": "text", "prefix": "H-", "length": 6}},
+        {"name": "fee", "type": "integer",
+         "generator": {"kind": "int_range", "min": 10, "max": 99}},
+        {"name": "customer_label", "type": "text",
+         "expression": {"op": "ref", "column": "customer_id",
+                        "target_column": "label"}}
+      ]
+    },
+    {
+      "name": "box",
+      "row_count": 9,
+      "primary_key": {"column": "box_id", "base": 7000, "stride": 2},
+      "columns": [
+        {"name": "order_id", "type": "integer",
+         "reference": {"table": "handover_order", "select": "round_robin",
+                       "nullable": false}},
+        {"name": "label", "type": "text",
+         "generator": {"kind": "choice",
+                       "values": ["冷链", "普货", "急件"]},
+         "null_ratio": {"numerator": 1, "denominator": 4}},
+        {"name": "order_customer", "type": "text",
+         "expression": {"op": "ref", "column": "order_id",
+                        "target_column": "customer_label"}}
+      ]
+    },
+    {
+      "name": "detail",
+      "row_count": 12,
+      "primary_key": {"column": "detail_id", "base": 90000, "stride": 1},
+      "columns": [
+        {"name": "box_id", "type": "integer",
+         "reference": {"table": "box", "select": "hash",
+                       "nullable": false}},
+        {"name": "qty", "type": "integer",
+         "generator": {"kind": "int_range", "min": 1, "max": 5}},
+        {"name": "unit_price", "type": "integer",
+         "generator": {"kind": "int_range", "min": 100, "max": 999}},
+        {"name": "amount", "type": "integer",
+         "expression": {"op": "mul",
+                        "args": [{"op": "col", "name": "qty"},
+                                 {"op": "col", "name": "unit_price"}]}},
+        {"name": "route", "type": "text",
+         "expression": {"op": "concat",
+                        "args": [{"op": "lit", "value": "路线:"},
+                                 {"op": "ref", "column": "box_id",
+                                  "target_column": "order_customer"}]}},
+        {"name": "tag", "type": "text",
+         "expression": {"op": "coalesce",
+                        "args": [{"op": "ref", "column": "box_id",
+                                  "target_column": "order_customer"},
+                                 {"op": "lit", "value": "无标签"}]}}
+      ]
+    }
+  ]
+}

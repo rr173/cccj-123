@@ -229,7 +229,176 @@ python3 -I examples/demo_ingestion.py
 - `examples/verify_queries.sql`
 - `examples/demo_ingestion.py`
 
-## 安全模型
+## 关系型测试数据生成器
+
+`relgen` 用一份**生成配方**（纯 JSON，不执行任何用户 SQL 或 Python）加一个
+**seed** 描述一整套相互引用的虚拟表。之后既可以按地址直接取某张表的第 i 行
+（不读业务数据库、不先生成整套资料、不依赖之前生成过哪个地址），也可以把
+整个配方一次落成带真实主键/外键的 SQLite，供 index / ingest / assemble 等
+现有命令演练。交付重点是**按地址生成**关联数据，而不是复制或清洗既有记录。
+
+### 行地址
+
+每张表声明 `name`、`row_count`（N，允许为 0）、整数主键列及其 `base` /
+`stride`：行号从零开始，第 i 行主键为 `base + i * stride`。`stride` 必须为
+正，所有键落在有符号 64 位范围（编译配方时检查首末键）。主键不依赖 seed；
+表顺序、列顺序不影响任何值。表名/列名可含空格与双引号，落库时一律作为
+标识符安全引用（双引号加倍）。
+
+### 随机映射规则（跨进程稳定）
+
+每个随机决策只取决于 `(seed, 表名, 列名, 行号, 用途标记)`：
+
+```
+digest = SHA-256( b"archindex-relgen\x00v1\x00"
+                  || u64be(seed)
+                  || u32be(len(表名UTF8)) || 表名UTF8
+                  || u32be(len(列名UTF8)) || 列名UTF8
+                  || u64be(行号)
+                  || u32be(len(用途ASCII)) || 用途ASCII )
+u64 = int.from_bytes(digest[:8], "big")
+```
+
+- `int_range [lo, hi]`：`lo + u64 % (hi - lo + 1)`（用途 `value`）
+- `choice`（k 个同型候选）：`values[u64 % k]`（用途 `value`）
+- 空值比例 `num/den`：`u64 % den < num` 时为 NULL（普通/派生列用途 `null`，
+  可空引用用途 `refnull`）；`num = 0` 从不为空，`num = den` 恒为空，判空与
+  取值使用不同用途标记
+- `hash` 引用：父行号 `u64 % 目标行数`（用途 `ref`）
+- `text` 后缀 m 个小写字母：字节流第 j 块为 `SHA-256(digest || u32be(j))`，
+  顺序取字节 `b` 得字母 `chr(ord('a') + b % 26)`（用途 `value`）
+
+`round_robin` 引用不用摘要：父行号即 `行号 % 目标行数`。父行号再按目标表
+的 `base`/`stride` 换算成实际键。映射是有意为之的简单取模——确定、可文档
+化，不承诺密码学随机或无偏。实现不使用 Python `hash()`、共享随机数游标、
+调用顺序或进程号，因此任意 `PYTHONHASHSEED`、任意访问模式下结果一致。
+
+### 配方格式
+
+```json
+{
+  "version": 1,
+  "tables": [
+    {"name": "customer", "row_count": 4,
+     "primary_key": {"column": "customer_id", "base": 1000, "stride": 10},
+     "columns": [
+       {"name": "tier", "type": "integer",
+        "generator": {"kind": "int_range", "min": 1, "max": 3}},
+       {"name": "label", "type": "text",
+        "generator": {"kind": "choice", "values": ["金牌", "银牌", "铜牌"]},
+        "null_ratio": {"numerator": 1, "denominator": 4}},
+       {"name": "code", "type": "text",
+        "generator": {"kind": "text", "prefix": "客户-", "length": 8},
+        "max_utf8_bytes": 32}
+     ]},
+    {"name": "handover_order", "row_count": 6,
+     "primary_key": {"column": "order_id", "base": 5000, "stride": 1},
+     "columns": [
+       {"name": "customer_id", "type": "integer",
+        "reference": {"table": "customer", "select": "round_robin",
+                      "nullable": false}},
+       {"name": "customer_label", "type": "text",
+        "expression": {"op": "ref", "column": "customer_id",
+                       "target_column": "label"}}
+     ]}
+  ]
+}
+```
+
+- 每列恰好是 `generator` / `reference` / `expression` 之一。生成器四类：
+  闭区间整数 `int_range`、同型非空候选 `choice`、固定前缀伪随机文本
+  `text`、常量 NULL `null`。非主键列可配 `null_ratio`（整数分子/分母）。
+- `text` 的 `length` 是**含前缀的 Unicode 码点总数**（前缀可以是中文），
+  后缀取自 ASCII 小写字母；`max_utf8_bytes` 是单值 UTF-8 字节上限
+  （默认 1024，按列可配，文本列的终值都会强制）。
+- 引用列指向另一表主键，`select` 为 `round_robin` 或 `hash`，`nullable`
+  必填/可空；不同引用列各自独立选择，即使指向同一张表。自引用与多表
+  循环引用都合法（行身份无需先写出）。必填引用遇空目标表在生成前拒绝；
+  可空引用遇空表得 NULL。引用列不能再定义其他值生成器。
+- 派生列是显式 JSON 表达式树，节点 `op` 为 `lit` / `col` / `ref` /
+  `add` / `mul` / `concat` / `coalesce`：`col` 读本行某列，`ref` 沿一个
+  已声明引用读目标行某列（引用为 NULL 则结果为 NULL），整数加/乘与文本
+  拼接遇 NULL 得 NULL，`coalesce` 取第一个非 NULL。允许跨多次引用逐层
+  派生（如 detail 经 box 读 order 上的客户标签）。类型不合、未知列、
+  非法运算与算术溢出都定位到表、行号、列及依赖路径；整数结果必须留在
+  有符号 64 位内，绝不转浮点。
+- 外键引用可以成环，但派生值的列依赖图（跨表读取展开到目标
+  `(表, 列)`）不能有环；编译配方时报告真实环路径，即使某次取值会被
+  `coalesce` 短路也不放行。求值只沿声明的引用走，不支持任意过滤或
+  全表聚合。
+
+完整样例见 `examples/relgen_recipe.example.json`（四表、两个指向同一表的
+独立引用列、两跳以上派生）。
+
+### Python 接口
+
+```python
+from archindex import (
+    RowFactory, compile_recipe, load_recipe,
+    generate_row, generate_rows, generate_database,
+)
+
+recipe = load_recipe("examples/relgen_recipe.example.json")
+row = generate_row(recipe, 42, "detail", 5)          # 单行，按地址
+for n, row in generate_rows(recipe, 42, "box", 0, 9):  # 连续行号区间 [0, 9)
+    ...
+
+factory = RowFactory(recipe, 42, cache_rows=4096)     # 有界 LRU 行缓存
+factory.row("detail", 5)
+print(factory.rows_computed)                          # 实际访问的行地址数
+
+result = generate_database(recipe, 42, "out.sqlite")  # 整库落盘
+print(result.table_rows, result.verified_rows)
+```
+
+区间按行号输出，越界报错；把 `[0, N)` 切成任意相邻小段、反向调用、穿插
+别表取样后再拼回，与一次生成完全相同。读取某个子行只计算它实际依赖的
+父行（缓存有明确上限，可随时丢弃）；大整数行号始终是精确 `int`。对
+十亿行虚拟父表取末端十个孩子只访问约二十行、亚毫秒返回。
+
+### 终端入口
+
+```bash
+python3 -I archindex/__main__.py gen-sample \
+  --recipe examples/relgen_recipe.example.json --seed 42 \
+  --table detail --rows 0:3          # 或 --row 5
+
+python3 -I archindex/__main__.py gen-db \
+  --recipe examples/relgen_recipe.example.json --seed 42 \
+  --output new.sqlite                # 目标已存在则拒绝
+```
+
+### 落库核对与内存上限来源
+
+`gen-db` 保留配方列顺序与 SQLite 存储类型，建出真实
+`INTEGER PRIMARY KEY` 与 `DEFERRABLE INITIALLY DEFERRED` 外键（循环引用表
+在同一事务内插入、提交时检查），随后实际核对：每表行数、主键序列
+（MIN/MAX/等差级数和）、`PRAGMA foreign_key_check`、以及每表首/中/末
+抽样行与生成器逐值比对（含派生列）。任何一步失败都删除未完成文件并
+报错，不会把半成品报告为成功。
+
+内存构成（均可调）：Python 解释器基线（实测约 20 MiB）、SQLite 页缓存
+（`--cache-size-kb`，默认 8192 KiB）、插入批次（`--batch-size`，默认
+1000 行）、生成器有界行缓存（`cache_rows`，默认 4096 行）与 JSON 输出
+缓冲。压力演练在 Linux 实测五十万行落库峰值 RSS 约 31 MiB，远低于
+96 MiB 预算，预算上限即演练断言值。
+
+### 可复跑演练
+
+```bash
+python3 -I examples/demo_relgen.py                     # 全部演练（含 50 万行压力）
+python3 -I examples/demo_relgen.py --stress-rows 500000
+python3 -I run_tests.py                                # 回归（含 relgen 用例）
+```
+
+演练覆盖：人工冻结的四表期望行（两个独立引用、两跳派生）与独立书写的
+地址/派生公式三方核对；合法外键环与非法跨表派生环；空父表可空/必填；
+整数溢出定位；中文长度与 UTF-8 字节上限；完全相同载荷不同主键；换
+seed 只影响随机列及其派生；打乱声明顺序不改数据；不同 PYTHONHASHSEED
+子进程结果一致；任意分段/反向/穿插调用等价；五十万行四表落库的耗时与
+峰值 RSS；十亿行虚拟父表末端十个孩子的访问行数与耗时。
+
+
 
 索引阶段拒绝：
 
@@ -287,13 +456,18 @@ CRC 篡改 / 截断流、摘要变更后导出拒绝、单成员导出往返验�
 以及嵌套组装的期望对象逐对象核对、四层方案、复合身份与分隔符、
 TEXT `'01'` 与 INTEGER `1` 区分、排序并列/NULL 排序/插入顺序无关、
 孤儿/重复身份/空引用/错误存储类型/配置冲突拒绝且不留最终文件、
-WAL 并发快照、连接释放、接入库只读不被改写和单巨根有界内存冒烟。
+WAL 并发快照、连接释放、接入库只读不被改写和单巨根有界内存冒烟；
+以及关系型数据生成的地址公式、四类生成器、空值比例精确边界、
+轮转/摘要引用与空父表、自引用与外键环、派生环拒绝、两跳派生、
+NULL 传播与 coalesce、溢出/类型错误定位、seed 与声明顺序无关性、
+分段等价、PYTHONHASHSEED 子进程一致、独立公式交叉核对、整库落盘
+核对与失败不留文件、生成库上的 assemble 集成。
 
 ## 模块布局
 
 ```text
 archindex/
-  errors.py      # 异常层次（索引、契约、清单、来源流、组装错误）
+  errors.py      # 异常层次（索引、契约、清单、来源流、组装、生成配方/取值错误）
   pathsan.py     # 纯逻辑路径归一化与链接目标安全解析（不碰真实文件系统）
   hashing.py     # 有界流式摘要 / 流式拷贝
   records.py     # Limits / MemberRecord / IndexResult
@@ -304,7 +478,8 @@ archindex/
   streams.py     # 归档成员的流式打开与完整读取/摘要复核
   ingestion.py   # 多来源清洗、隔离、SQLite 原子发布
   assembly.py    # 关系表 → 嵌套 JSONL 组装（方案校验、一致读取、流式写出）
-  __main__.py    # 终端 index / ingest / assemble 入口
+  relgen.py      # 关系型测试数据生成（配方编译、按地址取行、整库落盘）
+  __main__.py    # 终端 index / ingest / assemble / gen-sample / gen-db 入口
 tests/           # 合成归档构造器 + unittest 用例
-examples/        # 契约、清单、组装方案样例、查询和干净环境可复现演示
+examples/        # 契约、清单、组装方案、生成配方样例、查询和干净环境可复现演示
 ```

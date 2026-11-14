@@ -20,6 +20,13 @@ if __package__ in {None, ""}:
     from archindex.errors import ArchiveIndexError
     from archindex.indexer import index_archive
     from archindex.ingestion import ingest_sources
+    from archindex.relgen import (
+        DEFAULT_BATCH_SIZE as GEN_DEFAULT_BATCH_SIZE,
+        DEFAULT_CACHE_SIZE_KB as GEN_DEFAULT_CACHE_SIZE_KB,
+        RowFactory,
+        generate_database,
+        load_recipe,
+    )
 else:
     from .assembly import (
         DEFAULT_BATCH_SIZE,
@@ -31,6 +38,26 @@ else:
     from .errors import ArchiveIndexError
     from .indexer import index_archive
     from .ingestion import ingest_sources
+    from .relgen import (
+        DEFAULT_BATCH_SIZE as GEN_DEFAULT_BATCH_SIZE,
+        DEFAULT_CACHE_SIZE_KB as GEN_DEFAULT_CACHE_SIZE_KB,
+        RowFactory,
+        generate_database,
+        load_recipe,
+    )
+
+
+def _parse_seed(text: str) -> int:
+    """Parse a decimal or 0x-prefixed seed, keeping it inside [0, 2**64)."""
+    try:
+        seed = int(text, 0)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"seed must be an integer (decimal or 0x...), got {text!r}")
+    if not 0 <= seed <= 2 ** 64 - 1:
+        raise argparse.ArgumentTypeError(
+            f"seed must lie in [0, 2**64), got {seed}")
+    return seed
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -80,6 +107,42 @@ def _build_parser() -> argparse.ArgumentParser:
                           default=DEFAULT_WRITE_BUFFER_BYTES,
                           help="JSONL write buffer size "
                                f"(default {DEFAULT_WRITE_BUFFER_BYTES})")
+
+    gen_sample = sub.add_parser(
+        "gen-sample",
+        help="print addressed rows of a virtual table described by a "
+             "generation recipe (no database is read or written)")
+    gen_sample.add_argument("--recipe", required=True,
+                            help="generation recipe JSON file")
+    gen_sample.add_argument("--seed", required=True, type=_parse_seed,
+                            help="integer seed in [0, 2**64), decimal or "
+                                 "0x-prefixed")
+    gen_sample.add_argument("--table", required=True,
+                            help="table name from the recipe")
+    sel = gen_sample.add_mutually_exclusive_group(required=True)
+    sel.add_argument("--row", type=int, help="single zero-based row number")
+    sel.add_argument("--rows", metavar="START:STOP",
+                     help="contiguous row-number range [START, STOP)")
+
+    gen_db = sub.add_parser(
+        "gen-db",
+        help="materialise a whole generation recipe into a new SQLite "
+             "database with real primary/foreign keys")
+    gen_db.add_argument("--recipe", required=True,
+                        help="generation recipe JSON file")
+    gen_db.add_argument("--seed", required=True, type=_parse_seed,
+                        help="integer seed in [0, 2**64), decimal or "
+                             "0x-prefixed")
+    gen_db.add_argument("--output", required=True,
+                        help="new SQLite path (must not exist)")
+    gen_db.add_argument("--cache-size-kb", type=int,
+                        default=GEN_DEFAULT_CACHE_SIZE_KB,
+                        help="SQLite page cache in KiB "
+                             f"(default {GEN_DEFAULT_CACHE_SIZE_KB})")
+    gen_db.add_argument("--batch-size", type=int,
+                        default=GEN_DEFAULT_BATCH_SIZE,
+                        help="rows inserted per batch "
+                             f"(default {GEN_DEFAULT_BATCH_SIZE})")
     return parser
 
 
@@ -121,6 +184,38 @@ def main(argv: list[str] | None = None) -> int:
                 "output_bytes": outcome.output_bytes,
                 "elapsed_seconds": round(outcome.elapsed_seconds, 3),
             }, sys.stdout, ensure_ascii=False, indent=2)
+            sys.stdout.write("\n")
+            return 0
+        if args.command == "gen-sample":
+            recipe = load_recipe(Path(args.recipe))
+            factory = RowFactory(recipe, args.seed)
+            if args.row is not None:
+                addresses = [(args.row, factory.row(args.table, args.row))]
+            else:
+                try:
+                    start_s, stop_s = args.rows.split(":", 1)
+                    start, stop = int(start_s, 10), int(stop_s, 10)
+                except ValueError:
+                    print(f"error: --rows expects START:STOP, got "
+                          f"{args.rows!r}", file=sys.stderr)
+                    return 2
+                addresses = list(factory.rows(args.table, start, stop))
+            json.dump({
+                "table": args.table,
+                "seed": args.seed,
+                "rows": [{"row": number, "values": values}
+                         for number, values in addresses],
+                "rows_computed": factory.rows_computed,
+            }, sys.stdout, ensure_ascii=False, indent=2)
+            sys.stdout.write("\n")
+            return 0
+        if args.command == "gen-db":
+            outcome = generate_database(
+                load_recipe(Path(args.recipe)), args.seed,
+                Path(args.output), cache_size_kb=args.cache_size_kb,
+                batch_size=args.batch_size)
+            json.dump(outcome.to_dict(), sys.stdout, ensure_ascii=False,
+                      indent=2)
             sys.stdout.write("\n")
             return 0
     except (ArchiveIndexError, FileExistsError, FileNotFoundError, OSError,
