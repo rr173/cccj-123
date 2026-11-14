@@ -73,3 +73,19 @@ class SourceStreamError(IngestionError):
         self.records_read = records_read
         self.physical_lines = physical_lines
         self.bytes_processed = bytes_processed
+
+
+class AssemblyError(ArchiveIndexError):
+    """Base class for nested-delivery assembly failures."""
+
+
+class AssemblyPlanError(AssemblyError):
+    """An assembly plan is internally invalid or references unknown objects."""
+
+
+class AssemblyDataError(AssemblyError):
+    """A source row violates identity, reference or supported-value rules.
+
+    The message always names the plan node and the offending row identity so
+    the problem can be located without re-running the export.
+    """

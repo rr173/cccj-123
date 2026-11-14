@@ -18,6 +18,9 @@ High level entry points:
 from .errors import (
     AmbiguousMemberError,
     ArchiveIndexError,
+    AssemblyDataError,
+    AssemblyError,
+    AssemblyPlanError,
     ContractValidationError,
     CorruptArchiveError,
     DuplicateMemberError,
@@ -43,10 +46,24 @@ from .indexer import (
 from .ingestion import IngestionResult, ingest_sources
 from .contracts import Contract, FieldContract, load_contract, parse_contract
 from .manifest import SourceSpec, load_manifest, parse_manifest
+from .assembly import (
+    AssemblyPlan,
+    AssemblyResult,
+    NodeSpec,
+    ScalarSpec,
+    assemble_nested,
+    load_assembly_plan,
+    parse_assembly_plan,
+)
 
 __all__ = [
     "AmbiguousMemberError",
     "ArchiveIndexError",
+    "AssemblyDataError",
+    "AssemblyError",
+    "AssemblyPlan",
+    "AssemblyPlanError",
+    "AssemblyResult",
     "Contract",
     "ContractValidationError",
     "CorruptArchiveError",
@@ -59,11 +76,14 @@ __all__ = [
     "Limits",
     "ManifestValidationError",
     "MemberRecord",
+    "NodeSpec",
+    "ScalarSpec",
     "SourceSpec",
     "SourceStreamError",
     "SourceStructureError",
     "UnsupportedArchiveError",
     "UnsafePathError",
+    "assemble_nested",
     "diff_indices",
     "export_member",
     "find_by_prefix",
@@ -71,8 +91,10 @@ __all__ = [
     "index_tar",
     "index_zip",
     "ingest_sources",
+    "load_assembly_plan",
     "load_contract",
     "load_manifest",
+    "parse_assembly_plan",
     "parse_contract",
     "parse_manifest",
 ]

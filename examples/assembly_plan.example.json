@@ -1,0 +1,59 @@
+{
+  "nodes": [
+    {
+      "name": "order",
+      "table": "handover_order",
+      "identity": ["order_id"],
+      "scalars": [
+        {"column": "order_no", "alias": "orderNo"},
+        {"column": "handler", "alias": "handler"},
+        {"column": "amount", "alias": "amountText"},
+        {"column": "big_ref", "alias": "bigRef"},
+        {"column": "source_id", "alias": "sourceId"},
+        {"column": "member", "alias": "sourceMember"},
+        {"column": "occurrence", "alias": "sourceOccurrence"}
+      ],
+      "order_by": ["order_no"]
+    },
+    {
+      "name": "box",
+      "table": "box",
+      "identity": ["box_id"],
+      "parent": "order",
+      "array": "boxes",
+      "foreign_key": ["order_id"],
+      "scalars": [
+        {"column": "box_no", "alias": "boxNo"},
+        {"column": "label", "alias": "label"}
+      ],
+      "order_by": ["sort_key"]
+    },
+    {
+      "name": "detail",
+      "table": "detail",
+      "identity": ["detail_id"],
+      "parent": "box",
+      "array": "details",
+      "foreign_key": ["box_id"],
+      "scalars": [
+        {"column": "sku", "alias": "sku"},
+        {"column": "qty", "alias": "qty"},
+        {"column": "note", "alias": "note"}
+      ],
+      "order_by": []
+    },
+    {
+      "name": "remark",
+      "table": "handover_remark",
+      "identity": ["remark_id"],
+      "parent": "order",
+      "array": "remarks",
+      "foreign_key": ["order_id"],
+      "scalars": [
+        {"column": "body", "alias": "body"},
+        {"column": "created", "alias": "created"}
+      ],
+      "order_by": ["created"]
+    }
+  ]
+}
