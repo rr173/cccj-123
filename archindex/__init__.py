@@ -18,9 +18,14 @@ High level entry points:
 from .errors import (
     AmbiguousMemberError,
     ArchiveIndexError,
+    ContractValidationError,
     CorruptArchiveError,
     DuplicateMemberError,
+    IngestionError,
     LimitExceededError,
+    ManifestValidationError,
+    SourceStreamError,
+    SourceStructureError,
     UnsupportedArchiveError,
     UnsafePathError,
 )
@@ -35,16 +40,28 @@ from .indexer import (
     index_tar,
     index_zip,
 )
+from .ingestion import IngestionResult, ingest_sources
+from .contracts import Contract, FieldContract, load_contract, parse_contract
+from .manifest import SourceSpec, load_manifest, parse_manifest
 
 __all__ = [
     "AmbiguousMemberError",
     "ArchiveIndexError",
+    "Contract",
+    "ContractValidationError",
     "CorruptArchiveError",
     "DuplicateMemberError",
+    "FieldContract",
+    "IngestionError",
+    "IngestionResult",
     "IndexResult",
     "LimitExceededError",
     "Limits",
+    "ManifestValidationError",
     "MemberRecord",
+    "SourceSpec",
+    "SourceStreamError",
+    "SourceStructureError",
     "UnsupportedArchiveError",
     "UnsafePathError",
     "diff_indices",
@@ -53,6 +70,11 @@ __all__ = [
     "index_archive",
     "index_tar",
     "index_zip",
+    "ingest_sources",
+    "load_contract",
+    "load_manifest",
+    "parse_contract",
+    "parse_manifest",
 ]
 
 __version__ = "1.0.0"

@@ -1,0 +1,32 @@
+[
+  {
+    "archive": "/absolute/path/to/daily.zip",
+    "member": "data/daily.csv",
+    "occurrence": 1,
+    "encoding": "utf-8",
+    "delimiter": ",",
+    "mapping": {
+      "编号": "event_id",
+      "标题": "event_name",
+      "金额": "amount",
+      "发生时间": "occurred_at",
+      "备注": "note"
+    },
+    "ignore_extra_columns": true
+  },
+  {
+    "archive": "/absolute/path/to/daily.tar.gz",
+    "member": "in/table.tsv",
+    "occurrence": null,
+    "encoding": "gb18030",
+    "delimiter": "\t",
+    "mapping": {
+      "event_id": "event_id",
+      "event_name": "event_name",
+      "value": "amount",
+      "event_time": "occurred_at",
+      "note": "note"
+    },
+    "ignore_extra_columns": true
+  }
+]

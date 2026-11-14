@@ -1,0 +1,43 @@
+{
+  "table": "business_event",
+  "fields": [
+    {
+      "name": "event_id",
+      "type": "integer",
+      "nullable": false
+    },
+    {
+      "name": "event_name",
+      "type": "text",
+      "nullable": false,
+      "allowed": ["订单", "退款", "审计"]
+    },
+    {
+      "name": "amount",
+      "type": "decimal",
+      "nullable": false,
+      "precision": 12,
+      "scale": 4,
+      "min": "-99999999.9999",
+      "max": "99999999.9999"
+    },
+    {
+      "name": "occurred_at",
+      "type": "timestamp",
+      "nullable": false
+    },
+    {
+      "name": "status",
+      "type": "text",
+      "nullable": false,
+      "default": "NEW",
+      "allowed": ["NEW", "OK", "审计"]
+    },
+    {
+      "name": "note",
+      "type": "text",
+      "nullable": true
+    }
+  ],
+  "primary_key": ["event_id"]
+}
