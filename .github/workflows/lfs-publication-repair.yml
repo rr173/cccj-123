@@ -1,0 +1,40 @@
+name: cccj-123 task 5 approved LFS publication repair
+'on':
+  push:
+    branches:
+    - maintenance/cccj-123-005-lfs-20261116
+permissions:
+  contents: write
+jobs:
+  exact-lfs-objects:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        lfs: false
+        fetch-depth: 1
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install original NumPy version
+      run: python -m pip install numpy==2.4.6
+    - name: Reproduce and hash-check the two original matrix files
+      shell: bash
+      run: "python - <<'PYCODE'\nfrom pathlib import Path\nimport hashlib, os, numpy\
+        \ as np\nroot = Path(os.environ[\"GITHUB_WORKSPACE\"]) / \".git/lfs/objects\"\
+        \nfor tag, oid in [(1000, \"30a055342481590ce65aedc42ce85c0012620f1f6d75f239eac16ca93ffb5b7d\"\
+        ), (2000, \"c9f23f84cd1b3827e8d508882fcf88b53f81e092962342d32cffa208cb85b3ad\"\
+        )]:\n    target = root / oid[:2] / oid[2:4] / oid\n    target.parent.mkdir(parents=True,\
+        \ exist_ok=True)\n    matrix = np.lib.format.open_memmap(target, mode=\"w+\"\
+        , dtype=\"<f8\", shape=(8192,8192), fortran_order=False, version=(1,0))\n\
+        \    steps = np.arange(8192, dtype=\"<f8\") * np.float64(0.001)\n    for row\
+        \ in range(8192):\n        matrix[row,:] = np.float64(tag + row) + steps\n\
+        \    matrix.flush()\n    del matrix\n    h = hashlib.sha256()\n    with target.open(\"\
+        rb\") as source:\n        for block in iter(lambda: source.read(4*1024*1024),\
+        \ b\"\"):\n            h.update(block)\n    assert target.stat().st_size ==\
+        \ 536871040\n    assert h.hexdigest() == oid\n    print(\"Verified original\
+        \ matrix SHA256:\", oid, flush=True)\nPYCODE\n"
+    - name: Upload only the approved LFS object IDs
+      run: git lfs push --object-id origin 30a055342481590ce65aedc42ce85c0012620f1f6d75f239eac16ca93ffb5b7d
+        c9f23f84cd1b3827e8d508882fcf88b53f81e092962342d32cffa208cb85b3ad
