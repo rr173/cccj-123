@@ -3,6 +3,7 @@ name: cccj-123 task 5 approved LFS publication repair
   push:
     branches:
     - maintenance/cccj-123-005-lfs-20261116
+  workflow_dispatch:
 permissions:
   contents: write
 jobs:
@@ -38,3 +39,34 @@ jobs:
     - name: Upload only the approved LFS object IDs
       run: git lfs push --object-id origin 30a055342481590ce65aedc42ce85c0012620f1f6d75f239eac16ca93ffb5b7d
         c9f23f84cd1b3827e8d508882fcf88b53f81e092962342d32cffa208cb85b3ad
+    - name: Fetch published LFS commit
+      run: git fetch --no-tags origin a965c6b97debdd53113ff1dca8a5e47bf2551cb6:refs/remotes/origin/pointwise-artifact
+    - name: Download and verify published LFS objects
+      shell: bash
+      run: |
+        git lfs fetch origin refs/remotes/origin/pointwise-artifact
+        python - <<'PY'
+        import hashlib, json
+        from pathlib import Path
+
+        root = Path('.git/lfs/objects')
+        rows = []
+        for name, oid, size in [
+            ('examples/data/big/matrix_a.npy', '30a055342481590ce65aedc42ce85c0012620f1f6d75f239eac16ca93ffb5b7d', 536871040),
+            ('examples/data/big/matrix_b.npy', 'c9f23f84cd1b3827e8d508882fcf88b53f81e092962342d32cffa208cb85b3ad', 536871040),
+        ]:
+            path = root / oid[:2] / oid[2:4] / oid
+            h = hashlib.sha256()
+            with path.open('rb') as source:
+                for block in iter(lambda: source.read(4 * 1024 * 1024), b''):
+                    h.update(block)
+            assert path.stat().st_size == size
+            assert h.hexdigest() == oid
+            rows.append({'path': name, 'sha256': oid, 'bytes': size})
+        report = {'published_commit': 'a965c6b97debdd53113ff1dca8a5e47bf2551cb6', 'files': rows}
+        Path('lfs-readback.json').write_text(json.dumps(report, indent=2) + '\n')
+        PY
+    - uses: actions/upload-artifact@v4
+      with:
+        name: lfs-readback
+        path: lfs-readback.json
