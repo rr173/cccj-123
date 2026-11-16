@@ -119,3 +119,43 @@ class GenerationError(RelGenError):
         self.column = column
         self.path = tuple(path)
         super().__init__(message)
+
+
+class LabelReadError(ArchiveIndexError):
+    """Base class for label-coordinate joint-reading failures."""
+
+
+class DescriptorError(LabelReadError):
+    """A label-reading descriptor is structurally invalid or inconsistent.
+
+    Raised while opening/inspecting a descriptor, before any grid cell is
+    produced: unknown axes, bad coordinate types, duplicate labels inside one
+    source, bad shapes, variable type/dimension conflicts, unsupported
+    dtypes or unreadable files.
+    """
+
+
+class ReadRequestError(LabelReadError):
+    """A read request names unknown variables or labels or repeats a label.
+
+    Raised before the first cell is emitted, so a failed command never
+    produces a partial stream that could be mistaken for a result.
+    """
+
+
+class CellDataError(LabelReadError):
+    """A located cell holds unreadable business data.
+
+    Raised while iterating cells, after the stream has started: strict-mode
+    value conflicts or valid (unmasked) float64 NaN/infinity.  The message
+    names the variable, the logical coordinate and every involved source
+    with its file and physical indices.  A stream that fails this way is not
+    a successful result.
+    """
+
+    def __init__(self, message: str, *, variable: str | None = None,
+                 logical: dict | None = None, evidence: list | None = None):
+        super().__init__(message)
+        self.variable = variable
+        self.logical = logical
+        self.evidence = list(evidence or [])

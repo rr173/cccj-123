@@ -10,6 +10,9 @@ from pathlib import Path
 
 if __package__ in {None, ""}:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from archindex._vendor import ensure_numpy
+
+    ensure_numpy()
     from archindex.assembly import (
         DEFAULT_BATCH_SIZE,
         DEFAULT_CACHE_SIZE_KB,
@@ -20,6 +23,10 @@ if __package__ in {None, ""}:
     from archindex.errors import ArchiveIndexError
     from archindex.indexer import index_archive
     from archindex.ingestion import ingest_sources
+    from archindex.labelread import (
+        CellDataError,
+        load_descriptor,
+    )
     from archindex.relgen import (
         DEFAULT_BATCH_SIZE as GEN_DEFAULT_BATCH_SIZE,
         DEFAULT_CACHE_SIZE_KB as GEN_DEFAULT_CACHE_SIZE_KB,
@@ -28,6 +35,9 @@ if __package__ in {None, ""}:
         load_recipe,
     )
 else:
+    from ._vendor import ensure_numpy
+
+    ensure_numpy()
     from .assembly import (
         DEFAULT_BATCH_SIZE,
         DEFAULT_CACHE_SIZE_KB,
@@ -38,6 +48,10 @@ else:
     from .errors import ArchiveIndexError
     from .indexer import index_archive
     from .ingestion import ingest_sources
+    from .labelread import (
+        CellDataError,
+        load_descriptor,
+    )
     from .relgen import (
         DEFAULT_BATCH_SIZE as GEN_DEFAULT_BATCH_SIZE,
         DEFAULT_CACHE_SIZE_KB as GEN_DEFAULT_CACHE_SIZE_KB,
@@ -143,7 +157,66 @@ def _build_parser() -> argparse.ArgumentParser:
                         default=GEN_DEFAULT_BATCH_SIZE,
                         help="rows inserted per batch "
                              f"(default {GEN_DEFAULT_BATCH_SIZE})")
+
+    label_inspect = sub.add_parser(
+        "label-inspect",
+        help="open a label-coordinate descriptor and print its axes, visible "
+             "labels, sources and variables without reading array payloads")
+    label_inspect.add_argument("descriptor", help="label-read descriptor JSON")
+
+    label_read = sub.add_parser(
+        "label-read",
+        help="read aligned grid cells from a label-coordinate descriptor as JSONL")
+    label_read.add_argument("descriptor", help="label-read descriptor JSON")
+    label_read.add_argument("--request", required=True,
+                            help="read request JSON: "
+                                 '{"variables":[...], "selection":{axis:[labels]},'
+                                 ' "mode":"strict|priority", "priority":[ids]}')
+    label_read.add_argument("--batch-size", type=int,
+                            help="max cells materialised per output batch")
     return parser
+
+
+def _run_label_read(store, request: dict, batch_size) -> int:
+    variables = request.get("variables")
+    selection = request.get("selection")
+    mode = request.get("mode", "strict")
+    priority = request.get("priority")
+    # Validate the whole request before the first cell is emitted.  The
+    # generator receives the ORIGINAL selection and re-validates it itself;
+    # passing the already-resolved dict back would double-parse it.
+    info_list, _resolved, mode, priority = store._prepare_request(
+        variables, selection, mode, priority)
+    variable_names = [info.name for info in info_list]
+    written = 0
+    totals = {name: {"value": 0, "masked": 0, "absent": 0}
+              for name in variable_names}
+    stream = sys.stdout
+    # Emit cell by cell with an immediate flush: if a later cell raises a
+    # CellDataError, every previously emitted cell has truly left the
+    # process as valid JSONL, giving an observable (but never "successful")
+    # partial stream.  --batch-size only groups the flush cadence; cell
+    # materialisation itself stays one-at-a-time through the generator.
+    since_flush = 0
+    for cell in store.iter_cells(variable_names, selection, mode=mode,
+                                 priority=priority):
+        for name in variable_names:
+            totals[name][cell["variables"][name]["state"]] += 1
+        stream.write(json.dumps(cell, ensure_ascii=False,
+                                separators=(",", ":")))
+        stream.write("\n")
+        written += 1
+        since_flush += 1
+        if not batch_size or since_flush >= batch_size:
+            stream.flush()
+            since_flush = 0
+    stream.flush()
+    summary = {"status": "ok", "cells": written, "variables": totals}
+    stream.write(json.dumps({"summary": summary}, ensure_ascii=False,
+                            separators=(",", ":")))
+    stream.write("\n")
+    stream.flush()
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -218,6 +291,37 @@ def main(argv: list[str] | None = None) -> int:
                       indent=2)
             sys.stdout.write("\n")
             return 0
+        if args.command == "label-inspect":
+            store = load_descriptor(Path(args.descriptor))
+            json.dump(store.inspect(), sys.stdout, ensure_ascii=False, indent=2)
+            sys.stdout.write("\n")
+            return 0
+        if args.command == "label-read":
+            store = load_descriptor(Path(args.descriptor))
+            try:
+                with open(args.request, "r", encoding="utf-8") as handle:
+                    request = json.load(handle)
+            except OSError as exc:
+                print(f"error: cannot read request {args.request!r}: {exc}",
+                      file=sys.stderr)
+                return 2
+            except json.JSONDecodeError as exc:
+                print(f"error: request is not valid JSON: {exc}",
+                      file=sys.stderr)
+                return 2
+            if not isinstance(request, dict):
+                print("error: read request must be a JSON object",
+                      file=sys.stderr)
+                return 2
+            try:
+                return _run_label_read(store, request, args.batch_size)
+            except CellDataError as exc:
+                # Cells emitted before the offending one are already valid
+                # JSONL; flush them so the partial stream is observable,
+                # then fail nonzero without any success summary marker.
+                sys.stdout.flush()
+                print(f"error: {exc}", file=sys.stderr)
+                return 2
     except (ArchiveIndexError, FileExistsError, FileNotFoundError, OSError,
             ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)

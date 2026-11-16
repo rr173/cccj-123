@@ -400,7 +400,77 @@ seed 只影响随机列及其派生；打乱声明顺序不改数据；不同 PY
 
 
 
-索引阶段拒绝：
+## 标签坐标联合读取（只读 NumPy 矩阵按标签对齐）
+
+`labelread` 面向工厂交来的检测矩阵：一份按设备×批次放值、另一份按批次×设备
+放值，同一设备的数据还可能分散在几块矩阵里。它用一份 JSON 描述文件登记全局
+轴、各来源的一维坐标向量和只读 `.npy` 变量，按设备、批次等**真实标签**选格，
+绝不把数组下标相等当作坐标相等，也不先把矩阵转成关系表或合并成一份大数组。
+这里只有存储与对齐访问，不做插值、重采样、统计汇总或物理计算。
+
+### 描述文件
+
+完整格式与样例见 [`examples/LABELREAD.md`](examples/LABELREAD.md) 和
+[`examples/labelread_descriptor.example.json`](examples/labelread_descriptor.example.json)：
+
+- 1–4 个全局有序轴，每轴 `integer`（有符号 64 位、非 bool）或 `text`
+  （逐码点比较）；每轴单独选 `union` / `intersection` 集合策略。
+- 每个来源只为实际用到的轴列一维坐标向量，顺序可杂乱；同轴重复标签直接拒绝。
+  来源未用某轴时不参与该轴集合运算（不算空集合）。
+- 每个数值变量给 `.npy` 路径、按物理维度次序排列的轴名序列和可选同形 bool
+  掩码；只支持 int64/float64（含大小端），拒绝 object 数组、未知轴、坏 shape、
+  维度名重复和同名变量类型/逻辑维度冲突。
+- 同名变量所有来源逻辑维度集合必须相同，物理顺序任意；变量可只用部分全局轴
+  （如校准值只有 device 轴，读取时沿 batch **按声明广播**），来源缺维度会报错
+  而非偷偷广播。
+
+### 三态、冲突与来路
+
+每格每变量有 `value` / `masked` / `absent` 三态：无来源完整定位为 absent，
+全部掩码 false 为 masked（底层位模式不读作业务值），至少一个有效来源为 value。
+有效 float64 的 NaN/无穷在读到该格时报错，不混同缺测；掩码下的 NaN 不报错。
+重叠有效值可选 `strict`（完全相等、无容差、正负零相等、整数全程精确）或
+`priority`（按调用方给的唯一来源顺序取首个有效值，跳过掩码无效者，与描述文件
+登记先后无关）；冲突不平均、不比较 masked 底层数。每份 value 都带 source_id、
+文件和按物理维度次序排列的下标，广播后多格引用同一原位置属正常。
+
+输出按全局轴顺序成网格、最后一轴变化最快；显式选格按请求顺序，重复或不可见
+标签在第一格之前拒绝。值冲突/坏浮点可在流中失败：此前的合法 JSONL 是部分流，
+但没有成功 summary、退出码非零，部分流不算成功结果。
+
+### 资源模型与入口
+
+数组一律只读 mmap，不整体 `np.load`、不 meshgrid、不转置副本、不 `tolist`、
+不落对齐副本。常驻内存只有坐标向量和“标签→局部位置”映射，规模随标签数而非
+数组单元数增长；读取只触及请求格的原位置，未请求变量不读数据，支持有界分批。
+
+```python
+from archindex import load_descriptor
+
+with load_descriptor("examples/labelread_descriptor.example.json") as store:
+    store.inspect()                                  # 不读载荷的结构检查
+    for cell in store.iter_cells(
+            ["value", "calibration"],
+            selection={"device": ["D3", "D1"]},
+            mode="priority", priority=["yi", "jia", "bing"]):
+        ...
+```
+
+```bash
+python3 -I archindex/__main__.py label-inspect examples/labelread_descriptor.example.json
+python3 -I archindex/__main__.py label-read \
+    examples/labelread_descriptor.example.json \
+    --request examples/data/handcalc_request.example.json
+```
+
+可复跑演练：`python3 -I examples/demo_labelread.py`（手算九格、重排不变性、
+intersection、冲突、priority、NaN 区别、大整数、三轴）与
+`python3 -I examples/demo_labelread_big.py`（合计 1.000 GiB 的两块 8192×8192
+矩阵，仅取尾部 16 格，实测触 8 个 4 KiB 页、峰值 RSS 约 36.5 MiB）。
+本模块依赖 NumPy；无系统 NumPy 时自动使用仓库内 `vendor/` 的副本，
+`python -I` 下同样可导入。
+
+## 索引阶段拒绝：
 
 - 绝对路径（`/etc/passwd`、`C:\...`）
 - 路径穿越（`../`、`..\`、归一化后逃逸虚拟根的路径）
@@ -442,7 +512,8 @@ diff = diff_indices(index_archive("a.zip"), index_archive("b.zip"))
 
 ## 测试
 
-环境无第三方依赖，测试基于标准库 `unittest`，所有归档都在临时目录中现场合成：
+测试基于标准库 `unittest`，所有归档与矩阵都在临时目录中现场合成。除标签读取
+模块需要 NumPy（无系统安装时自动使用仓库内 `vendor/` 副本）外无第三方依赖：
 
 ```bash
 python3 -I run_tests.py
@@ -461,7 +532,12 @@ WAL 并发快照、连接释放、接入库只读不被改写和单巨根有界�
 轮转/摘要引用与空父表、自引用与外键环、派生环拒绝、两跳派生、
 NULL 传播与 coalesce、溢出/类型错误定位、seed 与声明顺序无关性、
 分段等价、PYTHONHASHSEED 子进程一致、独立公式交叉核对、整库落盘
-核对与失败不留文件、生成库上的 assemble 集成。
+核对与失败不留文件、生成库上的 assemble 集成；
+以及标签坐标联合读取的手算九格三态与物理来路、校准广播、来源/轴/坐标重排
+不变性、union/intersection 与空交集空网格、显式乱序选格、半坐标不可拼格、
+strict 冲突与 priority 跳过无效高优先级来源、重复标签/坏 shape/坏类型诊断、
+超过 2^53 精确整数与大小端、有效 NaN 与掩码下 NaN 区别、三轴变秩广播、
+只读 mmap 与 close 释放、CLI 部分流失败语义和 1 GiB 矩阵有界访问验证。
 
 ## 模块布局
 
@@ -479,7 +555,10 @@ archindex/
   ingestion.py   # 多来源清洗、隔离、SQLite 原子发布
   assembly.py    # 关系表 → 嵌套 JSONL 组装（方案校验、一致读取、流式写出）
   relgen.py      # 关系型测试数据生成（配方编译、按地址取行、整库落盘）
-  __main__.py    # 终端 index / ingest / assemble / gen-sample / gen-db 入口
+  labelread.py   # 标签坐标联合读取（描述校验、只读 mmap、按标签对齐取格）
+  _vendor.py     # 可选 NumPy 依赖的仓库内 vendor 引导（python -I 可用）
+  __main__.py    # 终端 index/ingest/assemble/gen-sample/gen-db/
+                 #   label-inspect/label-read 入口
 tests/           # 合成归档构造器 + unittest 用例
-examples/        # 契约、清单、组装方案、生成配方样例、查询和干净环境可复现演示
+examples/        # 契约、清单、组装方案、生成配方、标签读取样例和干净环境可复现演示
 ```

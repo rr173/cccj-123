@@ -1,0 +1,64 @@
+{
+  "format": "archindex-label-read-1",
+  "_comment": "Label-coordinate joint-reading descriptor. Relative .npy paths resolve against this file's directory. Coordinate order inside each source and physical axis order of each array are free; labels, not subscripts, align the data.",
+  "axes": [
+    {"name": "device", "type": "text", "set": "union"},
+    {"name": "batch", "type": "integer", "set": "union"}
+  ],
+  "sources": [
+    {
+      "source_id": "jia",
+      "coordinates": {
+        "device": {"path": "data/handcalc/jia_device.npy"},
+        "batch": {"path": "data/handcalc/jia_batch.npy"}
+      }
+    },
+    {
+      "source_id": "yi",
+      "coordinates": {
+        "device": {"path": "data/handcalc/yi_device.npy"},
+        "batch": {"path": "data/handcalc/yi_batch.npy"}
+      }
+    },
+    {
+      "source_id": "bing",
+      "coordinates": {
+        "device": {"path": "data/handcalc/bing_device.npy"},
+        "batch": {"path": "data/handcalc/bing_batch.npy"}
+      }
+    }
+  ],
+  "variables": [
+    {
+      "name": "value",
+      "source_id": "jia",
+      "path": "data/handcalc/jia_value.npy",
+      "dimensions": ["device", "batch"]
+    },
+    {
+      "name": "value",
+      "source_id": "yi",
+      "path": "data/handcalc/yi_value.npy",
+      "dimensions": ["batch", "device"]
+    },
+    {
+      "name": "value",
+      "source_id": "bing",
+      "path": "data/handcalc/bing_value.npy",
+      "mask_path": "data/handcalc/bing_value_mask.npy",
+      "dimensions": ["device", "batch"]
+    },
+    {
+      "name": "calibration",
+      "source_id": "jia",
+      "path": "data/handcalc/cal_jia.npy",
+      "dimensions": ["device"]
+    },
+    {
+      "name": "calibration",
+      "source_id": "yi",
+      "path": "data/handcalc/cal_yi.npy",
+      "dimensions": ["device"]
+    }
+  ]
+}

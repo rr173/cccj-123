@@ -1,0 +1,96 @@
+{
+  "format": "archindex-label-read-1",
+  "axes": [
+    {
+      "name": "device",
+      "type": "text",
+      "set": "union"
+    },
+    {
+      "name": "batch",
+      "type": "integer",
+      "set": "union"
+    }
+  ],
+  "sources": [
+    {
+      "source_id": "jia",
+      "coordinates": {
+        "device": {
+          "path": "handcalc/jia_device.npy"
+        },
+        "batch": {
+          "path": "handcalc/jia_batch.npy"
+        }
+      }
+    },
+    {
+      "source_id": "yi",
+      "coordinates": {
+        "device": {
+          "path": "handcalc/yi_device.npy"
+        },
+        "batch": {
+          "path": "handcalc/yi_batch.npy"
+        }
+      }
+    },
+    {
+      "source_id": "bing",
+      "coordinates": {
+        "device": {
+          "path": "handcalc/bing_device.npy"
+        },
+        "batch": {
+          "path": "handcalc/bing_batch.npy"
+        }
+      }
+    }
+  ],
+  "variables": [
+    {
+      "name": "value",
+      "source_id": "jia",
+      "path": "handcalc/jia_value.npy",
+      "dimensions": [
+        "device",
+        "batch"
+      ]
+    },
+    {
+      "name": "value",
+      "source_id": "yi",
+      "path": "handcalc/yi_value.npy",
+      "dimensions": [
+        "batch",
+        "device"
+      ]
+    },
+    {
+      "name": "value",
+      "source_id": "bing",
+      "path": "handcalc/bing_value.npy",
+      "mask_path": "handcalc/bing_value_mask.npy",
+      "dimensions": [
+        "device",
+        "batch"
+      ]
+    },
+    {
+      "name": "calibration",
+      "source_id": "jia",
+      "path": "handcalc/cal_jia.npy",
+      "dimensions": [
+        "device"
+      ]
+    },
+    {
+      "name": "calibration",
+      "source_id": "yi",
+      "path": "handcalc/cal_yi.npy",
+      "dimensions": [
+        "device"
+      ]
+    }
+  ]
+}

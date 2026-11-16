@@ -1,0 +1,12 @@
+{
+  "matrix_bytes_total": 1073742080,
+  "grid_cells_read": 16,
+  "scalar_reads": 32,
+  "touched_4kib_pages": 8,
+  "touched_bytes_estimate": 32768,
+  "touched_fraction_of_payload": 3.051757084904412e-05,
+  "peak_rss_bytes": 38264832,
+  "peak_rss_mib": 36.4921875,
+  "elapsed_seconds": 0.007,
+  "coordinate_label_count": 16384
+}
